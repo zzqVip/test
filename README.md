@@ -28,7 +28,7 @@ index.html
 1. `npm install && npm run build`（生成 `libs/load-test-participant.min.js`，`libs/` 在 `.gitignore` 中，仅本地构建产物）。
 2. 将与你线上一致的 **`lib-jitsi-meet.min.js`** 拷贝到仓库根目录下的 `libs/`（与官方 load-test 相同，来自你们 Jitsi Meet 构建的 `libs/`）。
 3. 在仓库根目录执行 `npm run serve:gaea`，浏览器打开  
-   `http://localhost:8080/meeting/cmoxw20dd0007qm0d3ffepgk8`
+   `http://localhost:9090/meeting/cmoxw20dd0007qm0d3ffepgk8`
 4. 参数 `numClients`、`clientInterval` 等：可用 **查询串**（`?numClients=5&clientInterval=300`）或 **hash**（`#numClients=5&clientInterval=300`），同名键时 hash 优先。`channelLastN=-1` 时人数一大客户端压力很高，请酌情调小并发。
 
 **注意**：仅应在已授权的环境中调节并发；`locationURL` 等字段不会被本 load-test 脚本读取，房间名完全由当前浏览器 URL 路径决定。
