@@ -53,8 +53,33 @@ function parseNonNegativeInt(value, fallback) {
 const numClients = parsePositiveInt(params.numClients, 1, 500);
 const clientInterval = parseNonNegativeInt(params.clientInterval, 100);
 
-const parsedLocation = parseURIString(window.location.toString());
-const rawRoom = parsedLocation?.room;
+/**
+ * Trailing slash makes parseURIString treat the last path segment as empty
+ * (e.g. /meeting/foo/ → room undefined). Strip trailing slashes before parsing.
+ */
+function hrefForRoomParsing(href) {
+    try {
+        const u = new URL(href);
+
+        u.pathname = u.pathname.replace(/\/+$/, '') || '/';
+
+        return u.toString();
+    } catch (e) {
+        return href;
+    }
+}
+
+const parsedLocation = parseURIString(hrefForRoomParsing(window.location.toString()));
+
+/** Fallback if room still missing (defensive). */
+let rawRoom = parsedLocation?.room;
+
+if (!rawRoom && parsedLocation?.pathname) {
+    const segments = parsedLocation.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+
+    rawRoom = segments.length ? segments[segments.length - 1] : undefined;
+}
+
 const roomName = getBackendSafeRoomName(rawRoom) || rawRoom?.toLowerCase();
 
 /** REST join-guest uses the path segment as meeting id (decoded). */
@@ -62,9 +87,9 @@ const meetingApiId = rawRoom ? safeDecodeURIComponent(rawRoom) : roomName;
 
 if (!roomName || !meetingApiId) {
     logger.error('Load-test: pathname has no room segment. Use e.g. /meeting/your-room-id');
+} else {
+    logger.info(`Load-test: room=${roomName} numClients=${numClients} clientIntervalMs=${clientInterval}`);
 }
-
-logger.info(`Load-test: room=${roomName} numClients=${numClients} clientIntervalMs=${clientInterval}`);
 
 function isLocalDevHostname(hostname) {
     return hostname === 'localhost'
@@ -164,10 +189,12 @@ class LoadTestClient {
     }
 
     updateConfig() {
+        const room = roomName || '';
+
         this.config.serviceUrl = this.config.bosh
-            = appendURLParam(this.config.websocket || this.config.bosh, "room", roomName.toLowerCase());
+            = appendURLParam(this.config.websocket || this.config.bosh, 'room', room.toLowerCase());
         if (this.config.websocketKeepAliveUrl) {
-            this.config.websocketKeepAliveUrl = appendURLParam(this.config.websocketKeepAliveUrl, "room", roomName.toLowerCase());
+            this.config.websocketKeepAliveUrl = appendURLParam(this.config.websocketKeepAliveUrl, 'room', room.toLowerCase());
         }
     }
 
@@ -743,6 +770,8 @@ function startClient(i) {
     }
 }
 
-if (numClients > 0) {
-    startClient(0)
+if (numClients > 0 && roomName && meetingApiId) {
+    startClient(0);
+} else if (numClients > 0) {
+    logger.error('Load-test: abort — invalid URL path / missing meeting id (trailing slash is OK after fix).');
 }
