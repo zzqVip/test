@@ -39,6 +39,7 @@
   },
   "license": "Apache-2.0",
   "scripts": {
-    "build": "webpack"
+    "build": "webpack",
+    "serve:gaea": "npx --yes serve . -p 8080 --no-port-switching"
   }
 }

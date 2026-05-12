@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Gaea load test — cmoxw20dd0007qm0d3ffepgk8</title>
+    <!--
+      URL 须为 /meeting/cmoxw20dd0007qm0d3ffepgk8（无尾斜杠亦可由静态服务器归一化），
+      以便 load-test 从 pathname 解析房间名，与线上一致：
+      https://meeting.gaea-labs.com/meeting/cmoxw20dd0007qm0d3ffepgk8
+    -->
+    <script>
+        /* eslint-disable */
+        var config = {
+            locationURL: 'https://meeting.gaea-labs.com/meeting/admin',
+            hosts: {
+                domain: 'rtc.gaea-labs.com',
+                muc: 'muc.rtc.gaea-labs.com'
+            },
+            bosh: 'https://rtc.gaea-labs.com/http-bind',
+            websocket: 'wss://rtc.gaea-labs.com/xmpp-websocket',
+            websocketKeepAlive: 60000,
+            bridgeChannel: {},
+            testing: {},
+            enableNoAudioDetection: true,
+            enableNoisyMicDetection: true,
+            channelLastN: -1,
+            p2p: {
+                enabled: true,
+                stunServers: [
+                    {
+                        urls: 'stun:meet-jit-si-turnrelay.jitsi.net:443'
+                    }
+                ]
+            },
+            analytics: {},
+            mouseMoveCallbackInterval: 1000,
+            defaultLogoUrl: 'images/gaea_logo_128.png',
+            defaultWatermarkClickUrl: 'https://www.gaea-labs.com/',
+            aiLecturer: {
+                enabled: true,
+                baseUrl: 'https://api.gaea-labs.com',
+                legacyClientEnabled: false,
+                chatReplyMode: 'text'
+            },
+            appId: 'gaealabs_jitsi',
+            meetingHostAuth: {
+                enabled: false,
+                apiBaseUrl: 'https://api.gaea-labs.com'
+            },
+            gaeaMeetingConsole: {
+                enabled: true,
+                apiBaseUrl: 'https://api.gaea-labs.com',
+                landingPageUrl: 'https://www.gaea-labs.com/',
+                disableVideo: true
+            },
+            deeplinking: {
+                disabled: true,
+                desktop: {
+                    appName: 'Gaea Meet',
+                    appScheme: 'jitsi-meet',
+                    download: {
+                        windows: 'https://github.com/jitsi/jitsi-meet-electron/releases/latest/download/jitsi-meet.exe',
+                        macos: 'https://github.com/jitsi/jitsi-meet-electron/releases/latest/download/jitsi-meet.dmg',
+                        linux: 'https://github.com/jitsi/jitsi-meet-electron/releases/latest/download/jitsi-meet-x86_64.AppImage'
+                    }
+                },
+                android: {
+                    appName: 'Gaea Meet',
+                    appScheme: 'org.jitsi.meet',
+                    downloadLink: 'https://play.google.com/store/apps/details?id=org.jitsi.meet',
+                    appPackage: 'org.jitsi.meet',
+                    fDroidUrl: 'https://f-droid.org/packages/org.jitsi.meet/'
+                },
+                ios: {
+                    appName: 'Gaea Meet',
+                    appScheme: 'org.jitsi.meet',
+                    downloadLink: 'https://itunes.apple.com/us/app/jitsi-meet/id1165103905'
+                }
+            },
+            startWithAudioMuted: true,
+            enableUserRolesBasedOnToken: false,
+            disableModeratorIndicator: true,
+            participantsPane: {
+                hideModeratorSettingsTab: true
+            },
+            remoteVideoMenu: {
+                disableGrantModerator: true
+            },
+            toolbarConfig: {},
+            welcomePage: {},
+            disabledSounds: [],
+            raisedHands: {},
+            e2ee: {},
+            defaultLocalDisplayName: 'me',
+            defaultRemoteDisplayName: 'Fellow Jitster',
+            transcription: {},
+            recordingService: {},
+            liveStreaming: {},
+            speakerStats: {}
+        };
+    </script>
+    <script src="/libs/lib-jitsi-meet.min.js?v=139"></script>
+    <script src="/libs/load-test-participant.min.js"></script>
+</head>
+<body>
+    <div>Number of participants: <span id="participants">1</span></div>
+    <p style="font-family:system-ui;font-size:14px;color:#444;max-width:42rem">
+        本地打开地址示例：<code>http://localhost:8080/meeting/cmoxw20dd0007qm0d3ffepgk8</code>。
+        Hash 示例：<code>#numClients=5&amp;clientInterval=300</code>（人数与入会间隔 ms）。勿对未授权的生产环境开大并发。
+    </p>
+</body>
+</html>
