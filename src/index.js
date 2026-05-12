@@ -7,7 +7,7 @@ import Logger, { getLogger } from '@jitsi/logger';
 
 import { setConfigFromURLParams } from './configUtils';
 import { parseURLParams } from './parseURLParams';
-import { parseURIString } from './uri';
+import { getBackendSafeRoomName, parseURIString } from './uri';
 import { validateLastNLimits, limitLastN } from './lastN';
 import JitsiMeetInMemoryLogStorage from './JitsiMeetInMemoryLogStorage';
 
@@ -27,12 +27,41 @@ const {
     remoteVideo = isHuman,
     remoteAudio = isHuman,
     autoPlayVideo = config.testing.noAutoPlayVideo !== true,
-    stageView = config.disableTileView,
-    numClients = 1,
-    clientInterval = 100 // ms
+    stageView = config.disableTileView
 } = params;
 
-const { room: roomName } = parseURIString(window.location.toString());
+function parsePositiveInt(value, fallback, max = Infinity) {
+    const n = Number.parseInt(String(value), 10);
+
+    if (!Number.isFinite(n) || n < 1) {
+        return fallback;
+    }
+
+    return Math.min(n, max);
+}
+
+function parseNonNegativeInt(value, fallback) {
+    const n = Number.parseInt(String(value), 10);
+
+    if (!Number.isFinite(n) || n < 0) {
+        return fallback;
+    }
+
+    return n;
+}
+
+const numClients = parsePositiveInt(params.numClients, 1, 500);
+const clientInterval = parseNonNegativeInt(params.clientInterval, 100);
+
+const parsedLocation = parseURIString(window.location.toString());
+const rawRoom = parsedLocation?.room;
+const roomName = getBackendSafeRoomName(rawRoom) || rawRoom?.toLowerCase();
+
+if (!roomName) {
+    logger.error('Load-test: pathname has no room segment. Use e.g. /meeting/your-room-id');
+}
+
+logger.info(`Load-test: room=${roomName} numClients=${numClients} clientIntervalMs=${clientInterval}`);
 
 function appendURLParam(url, name, value) {
     const newUrl = new URL(url);

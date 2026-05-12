@@ -104,11 +104,13 @@
 </head>
 <body>
     <div>Number of participants: <span id="participants">1</span></div>
-    <p style="font-family:system-ui;font-size:14px;color:#444;max-width:42rem">
-        本地打开地址示例：<code>http://localhost:8080/meeting/cmoxw20dd0007qm0d3ffepgk8</code>。
-        人数与间隔（ms）可用<strong>查询串或 hash</strong>（同名时 hash 优先），例如
-        <code>?numClients=5&amp;clientInterval=300</code> 或 <code>#numClients=5&amp;clientInterval=300</code>。
-        改完须重新 <code>npm run build</code> 生成 <code>load-test-participant.min.js</code>。勿对未授权的生产环境开大并发。
+    <p style="font-family:system-ui;font-size:14px;color:#444;max-width:46rem;line-height:1.5">
+        <strong>这个数字是什么：</strong>它是<strong>第一个负载客户端</strong>在<strong>Jitsi/XMPP 会议里</strong>看到的总人数（含自己），不是 Gaea Meet 网页侧边栏单独对接的后台人数。
+        只有你在线上链接里<strong>已经真正进了会</strong>（过了会前预览），且负载端<strong>确实进了同一个房间</strong>时，这里才会 ≥2。<br><br>
+        <strong>示例 URL：</strong><code>http://localhost:8080/meeting/cmoxw20dd0007qm0d3ffepgk8?numClients=5&amp;clientInterval=300</code>
+        （改代码后务必 <code>npm run build</code>，浏览器<strong>强制刷新</strong>避免旧 JS 缓存）。打开开发者工具 Console，应看到一行
+        <code>Load-test: room=… numClients=…</code>；若 <code>numClients</code> 仍是 1，说明参数未进到脚本。<br><br>
+        勿对未授权的生产环境开大并发。
     </p>
 </body>
 </html>
