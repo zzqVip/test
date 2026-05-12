@@ -103,10 +103,12 @@
     <script src="/libs/load-test-participant.min.js"></script>
 </head>
 <body>
-    <div>Number of participants: <span id="participants">1</span></div>
+    <div>Number of participants: <span id="participants">—</span></div>
     <p style="font-family:system-ui;font-size:14px;color:#444;max-width:46rem;line-height:1.5">
-        <strong>这个数字是什么：</strong>它是<strong>第一个负载客户端</strong>在<strong>Jitsi/XMPP 会议里</strong>看到的总人数（含自己），不是 Gaea Meet 网页侧边栏单独对接的后台人数。
-        只有你在线上链接里<strong>已经真正进了会</strong>（过了会前预览），且负载端<strong>确实进了同一个房间</strong>时，这里才会 ≥2。<br><br>
+        <strong>这个数字是什么：</strong>它是<strong>第一个负载客户端</strong>在<strong>Jitsi/XMPP 会议里</strong>看到的<strong>总人数（始终包含你自己这一路）</strong>。
+        所以会议室里「只有你／只有这一路负载」时，正常就是 <strong>1</strong>，不是 0；要对照「还有几个<strong>其他人</strong>」，用这个数减去已进入会议的<strong>本地负载客户端数量</strong>（或由控制台日志判断）。这不是 Gaea 后台单独的参会列表。<br><br>
+        只有你在线上链接里<strong>已经真正进了会</strong>（过了会前预览），且负载端<strong>确实进了同一个房间</strong>时，这里通常会<strong>≥2</strong>。<br><br>
+        <strong>libs/lib-jitsi-meet.min.js 若 404：</strong>必须从你们 Jitsi Meet 构建产物拷贝该文件到本仓库 <code>libs/</code>，否则会<strong>无法</strong>正常初始化 WebRTC/XMPP（不要用磁盘缓存误以为能用）；只有 <code>load-test-participant.min.js</code> 不够。<br><br>
         <strong>示例 URL：</strong><code>http://localhost:8080/meeting/cmoxw20dd0007qm0d3ffepgk8?numClients=5&amp;clientInterval=300</code>
         （改代码后务必 <code>npm run build</code>，浏览器<strong>强制刷新</strong>避免旧 JS 缓存）。打开开发者工具 Console，应看到一行
         <code>Load-test: room=… numClients=…</code>；若 <code>numClients</code> 仍是 1，说明参数未进到脚本。<br><br>
