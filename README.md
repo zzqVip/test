@@ -26,7 +26,9 @@ index.html
 步骤：
 
 1. `npm install && npm run build`（生成 `libs/load-test-participant.min.js`，`libs/` 在 `.gitignore` 中，仅本地构建产物）。
-2. 将与你线上一致的 **`lib-jitsi-meet.min.js`** 拷贝到仓库根目录下的 `libs/`（与官方 load-test 相同，来自你们 Jitsi Meet 构建的 `libs/`）。
+2. 将与你线上一致的 **`lib-jitsi-meet.min.js`** 拷贝到仓库根目录下的 `libs/`（与官方 load-test 相同，来自你们 Jitsi Meet 构建的 `libs/`）。  
+   **`libs/` 被 `.gitignore` 忽略**，克隆仓库后默认不会有该文件；无痕模式下也不会命中旧缓存，若 Network 里 **`/libs/lib-jitsi-meet.min.js` 一直是 404**，就说明这一步还没做或拷错路径。示例：  
+   `cp /path/to/your/jitsi-meet/libs/lib-jitsi-meet.min.js libs/`
 3. 在仓库根目录执行 `npm run serve:gaea`，浏览器打开  
    `http://localhost:9090/meeting/cmoxw20dd0007qm0d3ffepgk8`
 4. 参数 `numClients`、`clientInterval` 等：可用 **查询串**（`?numClients=5&clientInterval=300`）或 **hash**（`#numClients=5&clientInterval=300`），同名键时 hash 优先。`channelLastN=-1` 时人数一大客户端压力很高，请酌情调小并发。
