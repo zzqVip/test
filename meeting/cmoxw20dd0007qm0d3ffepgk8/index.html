@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <title>Gaea load test — cmoxw20dd0007qm0d3ffepgk8</title>
     <!--
-      入会前：脚本对每个虚拟客户端 POST
-      https://api.gaea-labs.com/api/v1/meetings/<meetingId>/join-guest
-      body { displayName }（随机 mock），用响应里的 jitsiJwt 连接 XMPP；不再从页面 URL 读取 token。
-      若浏览器报 CORS，需在 API 放行 http://localhost:<端口> 或将本页部署到 meeting 同源。
+      本地 npm run serve:gaea：同源 POST /api/v1/.../join-guest 由开发服务器代理到 api.gaea-labs.com（处理 CORS）。
+      body displayName 随机；用响应 jitsiJwt 入会，不从 URL 读 token。
     -->
     <script>
         /* eslint-disable */
@@ -44,10 +42,8 @@
                 chatReplyMode: 'text'
             },
             appId: 'gaealabs_jitsi',
-            /* join-guest 根地址；也可仅靠 meetingHostAuth / gaeaMeetingConsole 的 apiBaseUrl */
-            gaeaLoadTest: {
-                joinGuestApiBaseUrl: 'https://api.gaea-labs.com'
-            },
+            /* 本地 npm run serve:gaea 时 join-guest 走同源 /api/v1 代理；需直连 API 时再设 joinGuestApiBaseUrl */
+            gaeaLoadTest: {},
             meetingHostAuth: {
                 enabled: false,
                 apiBaseUrl: 'https://api.gaea-labs.com'
@@ -114,10 +110,9 @@
         所以会议室里「只有你／只有这一路负载」时，正常就是 <strong>1</strong>，不是 0；要对照「还有几个<strong>其他人</strong>」，用这个数减去已进入会议的<strong>本地负载客户端数量</strong>（或由控制台日志判断）。这不是 Gaea 后台单独的参会列表。<br><br>
         只有你在线上链接里<strong>已经真正进了会</strong>（过了会前预览），且负载端<strong>确实进了同一个房间</strong>时，这里通常会<strong>≥2</strong>。<br><br>
         <strong>libs/lib-jitsi-meet.min.js 若 404：</strong>必须从你们 Jitsi Meet 构建产物拷贝该文件到本仓库 <code>libs/</code>，否则会<strong>无法</strong>正常初始化 WebRTC/XMPP（不要用磁盘缓存误以为能用）；只有 <code>load-test-participant.min.js</code> 不够。<br><br>
-        <strong>入会 JWT：</strong>每个客户端会先请求
-        <code>POST …/api/v1/meetings/&lt;会议 id&gt;/join-guest</code>，
-        <code>displayName</code> 为随机 mock（形如 <code>loadtest-p0-…</code>），再用响应里的 <code>jitsiJwt</code> 入会；<strong>不需要</strong>在 URL 上带 token。
-        若控制台出现 CORS 错误，请让 API 允许当前页面 Origin（本地为 <code>http://localhost:…</code>）或将负载页部署到 <code>meeting.gaea-labs.com</code> 同源。<br><br>
+        <strong>入会 JWT：</strong>每个客户端会先请求同源路径
+        <code>POST /api/v1/meetings/&lt;会议 id&gt;/join-guest</code>（由 <code>npm run serve:gaea</code> 提供的本地服务<strong>反向代理</strong>到 <code>api.gaea-labs.com</code>，避免浏览器跨域），
+        body <code>displayName</code> 为随机 mock；再用响应里的 <code>jitsiJwt</code> 入会。<br><br>
         <strong>示例 URL：</strong><code>http://localhost:9090/meeting/cmoxw20dd0007qm0d3ffepgk8?numClients=5&amp;clientInterval=300</code>
         （改代码后务必 <code>npm run build</code>，浏览器<strong>强制刷新</strong>避免旧 JS 缓存）。打开开发者工具 Console，应看到一行
         <code>Load-test: room=… numClients=…</code>；若 <code>numClients</code> 仍是 1，说明参数未进到脚本。<br><br>

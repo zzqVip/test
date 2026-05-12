@@ -66,21 +66,40 @@ if (!roomName || !meetingApiId) {
 
 logger.info(`Load-test: room=${roomName} numClients=${numClients} clientIntervalMs=${clientInterval}`);
 
-function getJoinGuestApiBase() {
+function isLocalDevHostname(hostname) {
+    return hostname === 'localhost'
+        || hostname === '127.0.0.1'
+        || hostname === '[::1]'
+        || hostname === '::1';
+}
+
+/**
+ * Join-guest URL prefix: full origin + /api/v1, or same-origin /api/v1 (local proxy).
+ */
+function getJoinGuestUrlPrefix() {
     const g = config.gaeaLoadTest || {};
 
-    return g.joinGuestApiBaseUrl
-        || config.meetingHostAuth?.apiBaseUrl
+    if (g.joinGuestApiBaseUrl != null && String(g.joinGuestApiBaseUrl).trim() !== '') {
+        return `${String(g.joinGuestApiBaseUrl).replace(/\/$/, '')}/api/v1`;
+    }
+
+    const fallback = config.meetingHostAuth?.apiBaseUrl
         || config.gaeaMeetingConsole?.apiBaseUrl
         || 'https://api.gaea-labs.com';
+
+    if (typeof window !== 'undefined' && isLocalDevHostname(window.location.hostname)) {
+        return '/api/v1';
+    }
+
+    return `${String(fallback).replace(/\/$/, '')}/api/v1`;
 }
 
 /**
  * POST /api/v1/meetings/:id/join-guest — returns jitsiJwt for lib-jitsi.
  */
 async function fetchGuestJwt(meetingId, displayName) {
-    const base = getJoinGuestApiBase().replace(/\/$/, '');
-    const url = `${base}/api/v1/meetings/${encodeURIComponent(meetingId)}/join-guest`;
+    const prefix = getJoinGuestUrlPrefix();
+    const url = `${prefix}/meetings/${encodeURIComponent(meetingId)}/join-guest`;
     const res = await fetch(url, {
         method: 'POST',
         headers: {
