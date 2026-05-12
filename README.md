@@ -34,3 +34,14 @@ index.html
 4. 参数 `numClients`、`clientInterval` 等：可用 **查询串**（`?numClients=5&clientInterval=300`）或 **hash**（`#numClients=5&clientInterval=300`），同名键时 hash 优先。`channelLastN=-1` 时人数一大客户端压力很高，请酌情调小并发。
 
 **注意**：仅应在已授权的环境中调节并发；`locationURL` 等字段不会被本 load-test 脚本读取，房间名完全由当前浏览器 URL 路径决定。
+
+### 若 WebSocket 能连一会儿但控制台出现 `_sasl_failure_cb` / `Connection Failed`
+
+常见原因是 **租户路径（path 前缀)** 下的 **`bosh` / `websocket` / `hosts.muc` 与线上一致**：
+
+- URL 形如 `…/meeting/<会议 id>` 时，许多部署会使用  
+  **`wss://<rtc-host>/meeting/xmpp-websocket`**、**`…/meeting/http-bind`**，且  
+  **`muc` 为 `muc.meeting.<XMPP_DOMAIN>`**（租户名与路径第一段一致），而不是根路径的 `/xmpp-websocket` + `muc.<主域>`。  
+  本仓库示例页 [`meeting/cmoxw20dd0007qm0d3ffepgk8/index.html`](meeting/cmoxw20dd0007qm0d3ffepgk8/index.html) 已按 **租户 `meeting`** 改过；若你们线上租户前缀不同请同步修改。
+- 仍失败时请在**真实开会**的那一标签页开发者工具 Network 中选 **WS**，对照请求 URL、`config.hosts`、`config.bosh` 与本页内嵌是否一致。
+- 从 **`http://localhost:…`** 连生产 XMPP 时，若服务端限制 **WebSocket Origin / CORS**，也可能表现为认证失败；可临时把负载页同源部署到 `meeting.gaea-labs.com`（推荐）或由运维放行本地 Origin。

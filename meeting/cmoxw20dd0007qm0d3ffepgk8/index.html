@@ -4,9 +4,10 @@
     <meta charset="UTF-8">
     <title>Gaea load test — cmoxw20dd0007qm0d3ffepgk8</title>
     <!--
-      URL 须为 /meeting/cmoxw20dd0007qm0d3ffepgk8（无尾斜杠亦可由静态服务器归一化），
-      以便 load-test 从 pathname 解析房间名，与线上一致：
-      https://meeting.gaea-labs.com/meeting/cmoxw20dd0007qm0d3ffepgk8
+      会议 URL 为 /meeting/<roomId> 时，nginx 通常走「带子路径前缀」的 BOSH/WebSocket，
+     并为 Prosody 设置 prefix/subdomain（见 jitsi-meet nginx 示例里 /(TENANT)/xmpp-websocket）。
+      若仍使用根路径 /xmpp-websocket + muc.主域，易出现 WebSocket 能连但 SASL 失败。
+      若线上租户名不是 meeting，须改下面的 meeting/ 与 muc.meeting. 前缀。
     -->
     <script>
         /* eslint-disable */
@@ -14,10 +15,15 @@
             locationURL: 'https://meeting.gaea-labs.com/meeting/admin',
             hosts: {
                 domain: 'rtc.gaea-labs.com',
-                muc: 'muc.rtc.gaea-labs.com'
+
+                /*
+                 * 与 URL 第一段租户 meeting 对齐：nginx 对 /meeting/... 会设 subdomain 为 meeting.
+                 * 即 muc = 'muc.' + 'meeting.' + domain（参见 meeting.gaea-labs.com/meeting/config.js）
+                 */
+                muc: 'muc.meeting.rtc.gaea-labs.com'
             },
-            bosh: 'https://rtc.gaea-labs.com/http-bind',
-            websocket: 'wss://rtc.gaea-labs.com/xmpp-websocket',
+            bosh: 'https://rtc.gaea-labs.com/meeting/http-bind',
+            websocket: 'wss://rtc.gaea-labs.com/meeting/xmpp-websocket',
             websocketKeepAlive: 60000,
             bridgeChannel: {},
             testing: {},

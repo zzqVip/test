@@ -556,8 +556,8 @@ class LoadTestClient {
     /**
      * This function is called when the connection fail.
      */
-    onConnectionFailed() {
-        logger.error(`Participant ${this.id}: Connection Failed!`);
+    onConnectionFailed(err) {
+        logger.error(`Participant ${this.id}: Connection Failed`, err ?? '');
     }
 
     /**
