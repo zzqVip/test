@@ -29,19 +29,22 @@ index.html
 2. 将与你线上一致的 **`lib-jitsi-meet.min.js`** 拷贝到仓库根目录下的 `libs/`（与官方 load-test 相同，来自你们 Jitsi Meet 构建的 `libs/`）。  
    **`libs/` 被 `.gitignore` 忽略**，克隆仓库后默认不会有该文件；无痕模式下也不会命中旧缓存，若 Network 里 **`/libs/lib-jitsi-meet.min.js` 一直是 404**，就说明这一步还没做或拷错路径。示例：  
    `cp /path/to/your/jitsi-meet/libs/lib-jitsi-meet.min.js libs/`
-3. 在仓库根目录执行 `npm run serve:gaea`，浏览器打开（JWT 说明见下一步）  
-   `http://localhost:9090/meeting/cmoxw20dd0007qm0d3ffepgk8?token=<从 Network 复制的 JWT>&numClients=5&clientInterval=300`  
-   参数名也可用 `jwt=`，与脚本内等价；hash 里也支持同名键（后与前者合并时 hash 覆盖 search）。
-4. **`token` / `jwt`（必选）**：若在控制台看到 **`connection.passwordRequired`**，说明 XMPP 走 **JWT 认证**。在正式入会页面的 **Network → 选中 `xmpp-websocket` → Headers** 里，WebSocket URL 形如  
-   `wss://rtc.gaea-labs.com/xmpp-websocket?room=<id>&token=<jwt>`，把 `token=` 后的整段 JWT 粘到本地负载页 URL。**JWT 有过期时间**，失效后重新复制。
-5. 参数 `numClients`、`clientInterval`：`channelLastN=-1` 时人数一大客户端压力很高，请酌情调小并发。
+3. 在仓库根目录执行 `npm run serve:gaea`，浏览器打开例如  
+   `http://localhost:9090/meeting/cmoxw20dd0007qm0d3ffepgk8?numClients=5&clientInterval=300`
+4. **入会 JWT（join-guest）**：每个虚拟客户端在连接 XMPP **之前**会请求  
+   `POST https://api.gaea-labs.com/api/v1/meetings/<会议 id>/join-guest`  
+   请求体 `{"displayName":"<随机 mock>"}`，使用响应字段 **`jitsiJwt`**；**不再从页面 URL 读取 token**。  
+   API 根 URL 取自（优先级从高到低）`config.gaeaLoadTest.joinGuestApiBaseUrl`、`config.meetingHostAuth.apiBaseUrl`、`config.gaeaMeetingConsole.apiBaseUrl`，默认 `https://api.gaea-labs.com`。
+5. **CORS**：从 `http://localhost:…` 访问 `api.gaea-labs.com` 时，若接口未返回允许该 Origin 的 CORS 头，浏览器会拦截 `fetch`。需在 API 网关放行本地 Origin，或将负载静态页部署到 **`https://meeting.gaea-labs.com`** 同源。
+6. 参数 `numClients`、`clientInterval`：可用查询串或 hash（hash 优先）。`channelLastN=-1` 时人数一大客户端压力很高，请酌情调小并发。
 
-**配置对齐**：请以线上实际 WS/BOSH/MUC 为准（示例页默认为根路径 **`/xmpp-websocket`、`/http-bind`**、`muc.rtc.gaea-labs.com`）。若你与 Network 里的 URL 不一致，请直接改 [`meeting/cmoxw20dd0007qm0d3ffepgk8/index.html`](meeting/cmoxw20dd0007qm0d3ffepgk8/index.html) 内嵌 `config`。
+**配置对齐**：`hosts` / `bosh` / `websocket` 请以线上实际为准（示例页默认为根路径 **`/xmpp-websocket`、`/http-bind`**，`muc.rtc.gaea-labs.com`）。
 
-**注意**：仅应在已授权的环境中调节并发；不要把长期有效的 JWT 写进可被提交的文档或仓库。
+**注意**：仅应在已授权的环境中调节并发。
 
-### 若仍为 `connection.passwordRequired`
+### 若仍为 `connection.passwordRequired` 或 join-guest 失败
 
-- **未带或带错 JWT**（最常见）：对照 Network 里 `token=`。
-- **`JitsiConnection` 需要 appId**：示例 `config.appId` 已与你们 `gaealabs_jitsi` 对齐；若签发方要求变更，与服务端保持一致。
-- **WebSocket Origin**：浏览器发 `Origin: http://localhost:…`；若网关仅允许 `https://meeting.gaea-labs.com`，需在网关放行或同源部署负载页。
+- **join-guest 401/403**：会议策略或访客接口权限；检查 meeting id、环境、是否需要额外请求头/Cookie。
+- **CORS**：见上文。
+- **`JitsiConnection` appId**：示例 `config.appId` 为 `gaealabs_jitsi`，需与签发 JWT 的约定一致。
+- **WebSocket Origin**：若网关仅允许 `https://meeting.gaea-labs.com`，需在网关放行 `http://localhost:…` 或同源部署负载页。

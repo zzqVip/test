@@ -7,7 +7,7 @@ import Logger, { getLogger } from '@jitsi/logger';
 
 import { setConfigFromURLParams } from './configUtils';
 import { parseURLParams } from './parseURLParams';
-import { getBackendSafeRoomName, parseURIString } from './uri';
+import { getBackendSafeRoomName, parseURIString, safeDecodeURIComponent } from './uri';
 import { validateLastNLimits, limitLastN } from './lastN';
 import JitsiMeetInMemoryLogStorage from './JitsiMeetInMemoryLogStorage';
 
@@ -57,11 +57,65 @@ const parsedLocation = parseURIString(window.location.toString());
 const rawRoom = parsedLocation?.room;
 const roomName = getBackendSafeRoomName(rawRoom) || rawRoom?.toLowerCase();
 
-if (!roomName) {
+/** REST join-guest uses the path segment as meeting id (decoded). */
+const meetingApiId = rawRoom ? safeDecodeURIComponent(rawRoom) : roomName;
+
+if (!roomName || !meetingApiId) {
     logger.error('Load-test: pathname has no room segment. Use e.g. /meeting/your-room-id');
 }
 
 logger.info(`Load-test: room=${roomName} numClients=${numClients} clientIntervalMs=${clientInterval}`);
+
+function getJoinGuestApiBase() {
+    const g = config.gaeaLoadTest || {};
+
+    return g.joinGuestApiBaseUrl
+        || config.meetingHostAuth?.apiBaseUrl
+        || config.gaeaMeetingConsole?.apiBaseUrl
+        || 'https://api.gaea-labs.com';
+}
+
+/**
+ * POST /api/v1/meetings/:id/join-guest — returns jitsiJwt for lib-jitsi.
+ */
+async function fetchGuestJwt(meetingId, displayName) {
+    const base = getJoinGuestApiBase().replace(/\/$/, '');
+    const url = `${base}/api/v1/meetings/${encodeURIComponent(meetingId)}/join-guest`;
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ displayName }),
+        mode: 'cors',
+        credentials: 'omit'
+    });
+    const bodyText = await res.text();
+
+    if (!res.ok) {
+        throw new Error(`join-guest HTTP ${res.status}: ${bodyText.slice(0, 500)}`);
+    }
+    let data;
+
+    try {
+        data = JSON.parse(bodyText);
+    } catch (e) {
+        throw new Error(`join-guest: invalid JSON: ${bodyText.slice(0, 200)}`);
+    }
+    if (!data.jitsiJwt) {
+        throw new Error('join-guest: response missing jitsiJwt');
+    }
+
+    return data.jitsiJwt;
+}
+
+function randomGuestDisplayName(participantId) {
+    const r = Math.random().toString(36).slice(2, 10);
+    const t = Date.now().toString(36).slice(-6);
+
+    return `loadtest-p${participantId}-${t}-${r}`;
+}
 
 function appendURLParam(url, name, value) {
     const newUrl = new URL(url);
@@ -467,49 +521,45 @@ class LoadTestClient {
             this.localTracks.forEach((track) => track.mute());
 
             this.updateConfig();
-            this.connect();
+            this.connect().catch(err => logger.error(`Participant ${this.id}: reconnect failed`, err));
         });
     }
 
     /**
      * This function is called to connect.
      */
-    connect() {
+    async connect() {
         this._onConnectionSuccess = this.onConnectionSuccess.bind(this)
         this._onConnectionFailed = this.onConnectionFailed.bind(this)
         this._onConnectionRedirected = this.onConnectionRedirected.bind(this)
         this._disconnect = this.disconnect.bind(this)
 
-        /* Gaea Meet puts JWT on WS as ?token=…; older samples use jwt=… */
-        const jwtParams = {
-            ...parseURLParams(window.location, true, 'search'),
-            ...parseURLParams(window.location, true, 'hash')
-        };
-        const jwt = jwtParams.token || jwtParams.jwt;
+        let jwt;
 
-        if (!jwt) {
-            logger.warn(
-                'No token/jwt in page URL — server expects JWT (see WS wss://…/xmpp-websocket?room=…&token=…). '
-                + 'Add ?token=<jwt> from DevTools Network. Without it you get connection.passwordRequired.');
+        try {
+            const displayName = randomGuestDisplayName(this.id);
+
+            logger.info(`Participant ${this.id}: POST join-guest displayName=${displayName}`);
+            jwt = await fetchGuestJwt(meetingApiId, displayName);
+        } catch (e) {
+            logger.error(`Participant ${this.id}: join-guest failed`, e);
+
+            return;
         }
 
-        if (jwt) {
-            let jwtPayload;
+        let jwtPayload;
 
-            try {
-                jwtPayload = jwtDecode(jwt);
-            } catch (e) {
-                logger.error(e);
-            }
+        try {
+            jwtPayload = jwtDecode(jwt);
+        } catch (e) {
+            logger.error(e);
+        }
 
-            if (jwtPayload) {
-                const { context, iss, sub } = jwtPayload;
+        if (jwtPayload) {
+            const { context } = jwtPayload;
 
-                if (context) {
-                    if (context.user && context.user.role === 'visitor') {
-                        this.config.preferVisitor = true;
-                    }
-                }
+            if (context?.user?.role === 'visitor') {
+                this.config.preferVisitor = true;
             }
         }
 
@@ -646,8 +696,8 @@ function unload() {
         for (let i = 0; i < clients[j].localTracks.length; i++) {
             clients[j].localTracks[i].dispose();
         }
-        clients[j].room.leave();
-        clients[j].connection.disconnect();
+        clients[j].room?.leave();
+        clients[j].connection?.disconnect();
     }
     clients = [];
 }
@@ -668,7 +718,7 @@ JitsiMeetJS.init(config);
 function startClient(i) {
     // dirty copy of the config to be per client
     clients[i] = new LoadTestClient(i, JSON.parse(JSON.stringify(config)));
-    clients[i].connect();
+    clients[i].connect().catch(err => logger.error(`Participant ${i}: connect failed`, err));
     if (i + 1 < numClients) {
         setTimeout(() => { startClient(i+1) }, clientInterval)
     }

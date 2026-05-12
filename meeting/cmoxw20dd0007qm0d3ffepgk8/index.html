@@ -4,9 +4,10 @@
     <meta charset="UTF-8">
     <title>Gaea load test — cmoxw20dd0007qm0d3ffepgk8</title>
     <!--
-      Gaea 生产：浏览器里 WebSocket 为 wss://rtc.gaea-labs.com/xmpp-websocket?room=…&token=<JWT>
-     （需在 URL 上传入 token/jwt 查询参数）。MUC 为 cmoxw20…@muc.rtc.gaea-labs.com，不是 muc.meeting.…
-      无前缀 /meeting/ 的 websocket 时才与线上一致；若运维改成子路径请以 Network 为准。
+      入会前：脚本对每个虚拟客户端 POST
+      https://api.gaea-labs.com/api/v1/meetings/<meetingId>/join-guest
+      body { displayName }（随机 mock），用响应里的 jitsiJwt 连接 XMPP；不再从页面 URL 读取 token。
+      若浏览器报 CORS，需在 API 放行 http://localhost:<端口> 或将本页部署到 meeting 同源。
     -->
     <script>
         /* eslint-disable */
@@ -43,6 +44,10 @@
                 chatReplyMode: 'text'
             },
             appId: 'gaealabs_jitsi',
+            /* join-guest 根地址；也可仅靠 meetingHostAuth / gaeaMeetingConsole 的 apiBaseUrl */
+            gaeaLoadTest: {
+                joinGuestApiBaseUrl: 'https://api.gaea-labs.com'
+            },
             meetingHostAuth: {
                 enabled: false,
                 apiBaseUrl: 'https://api.gaea-labs.com'
@@ -109,12 +114,11 @@
         所以会议室里「只有你／只有这一路负载」时，正常就是 <strong>1</strong>，不是 0；要对照「还有几个<strong>其他人</strong>」，用这个数减去已进入会议的<strong>本地负载客户端数量</strong>（或由控制台日志判断）。这不是 Gaea 后台单独的参会列表。<br><br>
         只有你在线上链接里<strong>已经真正进了会</strong>（过了会前预览），且负载端<strong>确实进了同一个房间</strong>时，这里通常会<strong>≥2</strong>。<br><br>
         <strong>libs/lib-jitsi-meet.min.js 若 404：</strong>必须从你们 Jitsi Meet 构建产物拷贝该文件到本仓库 <code>libs/</code>，否则会<strong>无法</strong>正常初始化 WebRTC/XMPP（不要用磁盘缓存误以为能用）；只有 <code>load-test-participant.min.js</code> 不够。<br><br>
-        <strong>JWT / Token（必选）：</strong>线上 WebSocket 带 <code>?room=…&amp;token=…</code>；
-        服务端开启认证时，本地负载页若没有 token 会看到 <code>connection.passwordRequired</code>。
-        在正式开会页 Network → WS → 拷贝 URL 里的 <code>token=</code> 整段 JWT，加到本地地址：
-        <code>?token=…&amp;numClients=…</code>（也可用 <code>jwt=</code>，与脚本内一致）。
-        JWT 有过期时间，失效后需重新复制。<br><br>
-        <strong>示例 URL：</strong><code>http://localhost:9090/meeting/cmoxw20dd0007qm0d3ffepgk8?token=&lt;paste-jwt&gt;&amp;numClients=5&amp;clientInterval=300</code>
+        <strong>入会 JWT：</strong>每个客户端会先请求
+        <code>POST …/api/v1/meetings/&lt;会议 id&gt;/join-guest</code>，
+        <code>displayName</code> 为随机 mock（形如 <code>loadtest-p0-…</code>），再用响应里的 <code>jitsiJwt</code> 入会；<strong>不需要</strong>在 URL 上带 token。
+        若控制台出现 CORS 错误，请让 API 允许当前页面 Origin（本地为 <code>http://localhost:…</code>）或将负载页部署到 <code>meeting.gaea-labs.com</code> 同源。<br><br>
+        <strong>示例 URL：</strong><code>http://localhost:9090/meeting/cmoxw20dd0007qm0d3ffepgk8?numClients=5&amp;clientInterval=300</code>
         （改代码后务必 <code>npm run build</code>，浏览器<strong>强制刷新</strong>避免旧 JS 缓存）。打开开发者工具 Console，应看到一行
         <code>Load-test: room=… numClients=…</code>；若 <code>numClients</code> 仍是 1，说明参数未进到脚本。<br><br>
         勿对未授权的生产环境开大并发。
