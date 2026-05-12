@@ -15,7 +15,11 @@ const logger = getLogger('load-test-client');
 
 setConfigFromURLParams(config, {}, {}, window.location);
 
-const params = parseURLParams(window.location, false, 'hash');
+// Load-test controls: allow both ?query and #hash (hash wins on same key; matches common URL habits).
+const params = {
+    ...parseURLParams(window.location, false, 'search'),
+    ...parseURLParams(window.location, false, 'hash')
+};
 const { isHuman = false } = params;
 const {
     localVideo = config.startWithVideoMuted !== true,

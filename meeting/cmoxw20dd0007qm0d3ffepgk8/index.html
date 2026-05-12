@@ -106,7 +106,9 @@
     <div>Number of participants: <span id="participants">1</span></div>
     <p style="font-family:system-ui;font-size:14px;color:#444;max-width:42rem">
         本地打开地址示例：<code>http://localhost:8080/meeting/cmoxw20dd0007qm0d3ffepgk8</code>。
-        Hash 示例：<code>#numClients=5&amp;clientInterval=300</code>（人数与入会间隔 ms）。勿对未授权的生产环境开大并发。
+        人数与间隔（ms）可用<strong>查询串或 hash</strong>（同名时 hash 优先），例如
+        <code>?numClients=5&amp;clientInterval=300</code> 或 <code>#numClients=5&amp;clientInterval=300</code>。
+        改完须重新 <code>npm run build</code> 生成 <code>load-test-participant.min.js</code>。勿对未授权的生产环境开大并发。
     </p>
 </body>
 </html>
