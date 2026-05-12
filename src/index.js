@@ -480,8 +480,18 @@ class LoadTestClient {
         this._onConnectionRedirected = this.onConnectionRedirected.bind(this)
         this._disconnect = this.disconnect.bind(this)
 
-        const params = parseURLParams(window.location, true, 'search');
-        const jwt = params.jwt;
+        /* Gaea Meet puts JWT on WS as ?token=…; older samples use jwt=… */
+        const jwtParams = {
+            ...parseURLParams(window.location, true, 'search'),
+            ...parseURLParams(window.location, true, 'hash')
+        };
+        const jwt = jwtParams.token || jwtParams.jwt;
+
+        if (!jwt) {
+            logger.warn(
+                'No token/jwt in page URL — server expects JWT (see WS wss://…/xmpp-websocket?room=…&token=…). '
+                + 'Add ?token=<jwt> from DevTools Network. Without it you get connection.passwordRequired.');
+        }
 
         if (jwt) {
             let jwtPayload;
@@ -503,7 +513,7 @@ class LoadTestClient {
             }
         }
 
-        this.connection = new JitsiMeetJS.JitsiConnection(null, jwt, this.config);
+        this.connection = new JitsiMeetJS.JitsiConnection(config.appId || null, jwt, this.config);
         this.connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_ESTABLISHED, this._onConnectionSuccess);
         this.connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_FAILED, this._onConnectionFailed);
         this.connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_DISCONNECTED, this._disconnect);
