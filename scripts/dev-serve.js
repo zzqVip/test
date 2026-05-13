@@ -7,7 +7,7 @@ const path = require('path');
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
-const PORT = Number(process.env.PORT) || 9090;
+const PORT = Number(process.env.PORT) || 5173;
 const ROOT = path.resolve(__dirname, '..');
 const API_ORIGIN = process.env.GAEA_API_ORIGIN || 'https://api.gaea-labs.com';
 
@@ -38,6 +38,27 @@ const proxyApi = createProxyMiddleware({
 });
 
 app.use('/api/v1', proxyApi);
+
+/**
+ * One HTML shell for every room id: client reads room from pathname.
+ * Avoids copying meeting/<roomId>/ for each conference.
+ * /meeting and /meeting/ — control panel only (meeting id from form).
+ */
+const MEETING_LOAD_SHELL = path.join(ROOT, 'meeting', 'cmoxw20dd0007qm0d3ffepgk8', 'index.html');
+
+app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return next();
+    }
+    if (req.path === '/meeting' || req.path === '/meeting/') {
+        return res.sendFile(MEETING_LOAD_SHELL, err => (err ? next() : undefined));
+    }
+    const ok = /^\/meeting\/[^/]+\/?$/.test(req.path);
+    if (!ok) {
+        return next();
+    }
+    res.sendFile(MEETING_LOAD_SHELL, err => (err ? next() : undefined));
+});
 
 app.use(express.static(ROOT, {
     index: [ 'index.html' ],

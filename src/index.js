@@ -7,7 +7,7 @@ import Logger, { getLogger } from '@jitsi/logger';
 
 import { setConfigFromURLParams } from './configUtils';
 import { parseURLParams } from './parseURLParams';
-import { getBackendSafeRoomName, parseURIString, safeDecodeURIComponent } from './uri';
+import { getBackendSafeRoomName, safeDecodeURIComponent } from './uri';
 import { validateLastNLimits, limitLastN } from './lastN';
 import JitsiMeetInMemoryLogStorage from './JitsiMeetInMemoryLogStorage';
 
@@ -15,20 +15,30 @@ const logger = getLogger('load-test-client');
 
 setConfigFromURLParams(config, {}, {}, window.location);
 
-// Load-test controls: allow both ?query and #hash (hash wins on same key; matches common URL habits).
+// Load-test controls: allow both ?query and #hash (hash wins on same key). 默认不采集摄像头与麦克风。
 const params = {
     ...parseURLParams(window.location, false, 'search'),
     ...parseURLParams(window.location, false, 'hash')
 };
 const { isHuman = false } = params;
 const {
-    localVideo = config.startWithVideoMuted !== true,
-    localAudio = !config.disableInitialGUM && !config.startWithAudioMuted,
+    localVideo = false,
+    localAudio = false,
     remoteVideo = isHuman,
     remoteAudio = isHuman,
     autoPlayVideo = config.testing.noAutoPlayVideo !== true,
     stageView = config.disableTileView
 } = params;
+
+/** 媒体行为（仍可由 URL 覆盖）；每次 Start 时传给 LoadTestClient */
+const mediaOpts = {
+    localVideo,
+    localAudio,
+    remoteVideo,
+    remoteAudio,
+    autoPlayVideo,
+    stageView
+};
 
 function parsePositiveInt(value, fallback, max = Infinity) {
     const n = Number.parseInt(String(value), 10);
@@ -50,45 +60,34 @@ function parseNonNegativeInt(value, fallback) {
     return n;
 }
 
-const numClients = parsePositiveInt(params.numClients, 1, 500);
-const clientInterval = parseNonNegativeInt(params.clientInterval, 100);
+/** 仅用于表单预填的 pathname 会议 id（例如 /meeting/abc/） */
+function getMeetingIdPathHint() {
+    const m = window.location.pathname.match(/^\/meeting\/([^/]+)\/?$/u);
 
-/**
- * Trailing slash makes parseURIString treat the last path segment as empty
- * (e.g. /meeting/foo/ → room undefined). Strip trailing slashes before parsing.
- */
-function hrefForRoomParsing(href) {
-    try {
-        const u = new URL(href);
+    return m && m[1] && m[1] !== 'meeting' ? safeDecodeURIComponent(m[1]) : '';
+}
 
-        u.pathname = u.pathname.replace(/\/+$/, '') || '/';
+/** 当前一次压测运行（点击「开始」时写入） */
+let activeRoomName = '';
+let activeMeetingApiId = '';
+let activeNumClients = 1;
+let activeClientInterval = 100;
+/** true = 按固定间隔发起入会，不等待上一路成功；false = 上一路 CONFERENCE_JOINED 后再开下一路 */
+let activeConcurrentMode = false;
+let loadTestRunning = false;
+let scheduleNextClientTimer = null;
+/** 并发模式下按间隔发射 join 的定时器 */
+let concurrentJoinIntervalId = null;
 
-        return u.toString();
-    } catch (e) {
-        return href;
+function clearLoadTestSchedulers() {
+    if (scheduleNextClientTimer) {
+        clearTimeout(scheduleNextClientTimer);
+        scheduleNextClientTimer = null;
     }
-}
-
-const parsedLocation = parseURIString(hrefForRoomParsing(window.location.toString()));
-
-/** Fallback if room still missing (defensive). */
-let rawRoom = parsedLocation?.room;
-
-if (!rawRoom && parsedLocation?.pathname) {
-    const segments = parsedLocation.pathname.replace(/\/+$/, '').split('/').filter(Boolean);
-
-    rawRoom = segments.length ? segments[segments.length - 1] : undefined;
-}
-
-const roomName = getBackendSafeRoomName(rawRoom) || rawRoom?.toLowerCase();
-
-/** REST join-guest uses the path segment as meeting id (decoded). */
-const meetingApiId = rawRoom ? safeDecodeURIComponent(rawRoom) : roomName;
-
-if (!roomName || !meetingApiId) {
-    logger.error('Load-test: pathname has no room segment. Use e.g. /meeting/your-room-id');
-} else {
-    logger.info(`Load-test: room=${roomName} numClients=${numClients} clientIntervalMs=${clientInterval}`);
+    if (concurrentJoinIntervalId !== null) {
+        clearInterval(concurrentJoinIntervalId);
+        concurrentJoinIntervalId = null;
+    }
 }
 
 function isLocalDevHostname(hostname) {
@@ -170,8 +169,25 @@ function appendURLParam(url, name, value) {
 }
 
 
+function resolveMeetingFromUserInput(input) {
+    const trimmed = String(input ?? '').trim();
+
+    if (!trimmed) {
+        return { ok: false, message: '请填写会议 ID' };
+    }
+    const meetingApiId = safeDecodeURIComponent(trimmed);
+    const roomName = getBackendSafeRoomName(trimmed) || meetingApiId.toLowerCase();
+
+    if (!roomName || !meetingApiId) {
+        return { ok: false, message: '会议 ID 无效' };
+    }
+
+    return { ok: true, roomName, meetingApiId };
+}
+
+
 class LoadTestClient {
-    constructor(id, config) {
+    constructor(id, config, run) {
         this.id = id;
         this.connection = null;
         this.dataChannelOpen = false;
@@ -181,15 +197,24 @@ class LoadTestClient {
         this.remoteTracks = {};
         this.onStageParticipant = null;
         this.config = config;
-        this.localAudio = localAudio;
+        this.roomName = run.roomName;
+        this.meetingApiId = run.meetingApiId;
+        this.localVideo = run.localVideo;
+        this.localAudio = run.localAudio;
+        this.remoteVideo = run.remoteVideo;
+        this.remoteAudio = run.remoteAudio;
+        this.autoPlayVideo = run.autoPlayVideo;
+        this.stageView = run.stageView;
         this.visitor = false;
+        /** 只在一轮压测里为「串行下一路」通知一次，避免 visitor 重连再次触发 */
+        this._loadTestJoinNotified = false;
         this.receiverConstraints = { onStageSources: [], defaultConstraints: {} };
 
         this.updateConfig();
     }
 
     updateConfig() {
-        const room = roomName || '';
+        const room = this.roomName || '';
 
         this.config.serviceUrl = this.config.bosh
             = appendURLParam(this.config.websocket || this.config.bosh, 'room', room.toLowerCase());
@@ -209,7 +234,7 @@ class LoadTestClient {
 
         let newMaxFrameHeight;
 
-        if (stageView) {
+        if (this.stageView) {
             newMaxFrameHeight = 2160;
         }
         else {
@@ -265,7 +290,7 @@ class LoadTestClient {
      * for stage view.
      */
     isValidStageViewParticipant(id) {
-        return (id !== room.myUserId() && room.getParticipantById(id));
+        return (id !== this.room.myUserId() && this.room.getParticipantById(id));
     }
 
     /**
@@ -281,7 +306,7 @@ class LoadTestClient {
             newOnStageParticipant = selected;
         }
         else {
-            newOnStageParticipant = previous.find(isValidStageViewParticipant);
+            newOnStageParticipant = previous.find(pid => this.isValidStageViewParticipant(pid));
         }
         if (newOnStageParticipant && newOnStageParticipant !== this.onStageParticipant) {
             this.onStageParticipant = newOnStageParticipant;
@@ -363,7 +388,7 @@ class LoadTestClient {
         for (let i = 0; i < this.localTracks.length; i++) {
             if (this.localTracks[i].getType() === 'video') {
                 if (this.id === 0) {
-                    $('body').append(`<video ${autoPlayVideo ? 'autoplay="1" ' : ''}id='localVideo${i}' />`);
+                    $('body').append(`<video ${this.autoPlayVideo ? 'autoplay="1" ' : ''}id='localVideo${i}' />`);
                     this.localTracks[i].attach($(`#localVideo${i}`)[0]);
                 }
 
@@ -390,7 +415,7 @@ class LoadTestClient {
      */
     onRemoteTrack(track) {
         if (track.isLocal()
-            || (track.getType() === 'video' && !remoteVideo) || (track.getType() === 'audio' && !remoteAudio)) {
+            || (track.getType() === 'video' && !this.remoteVideo) || (track.getType() === 'audio' && !this.remoteAudio)) {
             return;
         }
         const participant = track.getParticipantId();
@@ -426,6 +451,12 @@ class LoadTestClient {
         this.setNumberOfParticipants();
         this.room.on(JitsiMeetJS.events.conference.USER_JOINED, this.onUserJoined.bind(this));
         this.room.on(JitsiMeetJS.events.conference._MEDIA_SESSION_STARTED, this.onMediaSessionStarted.bind(this));
+
+        /* 串行压测：上一路 CONFERENCE_JOINED 后再启动下一路（visitor 二次入会不重复调度）；并发模式不按入会调度 */
+        if (!activeConcurrentMode && !this._loadTestJoinNotified) {
+            this._loadTestJoinNotified = true;
+            scheduleNextClientAfterJoined(this.id);
+        }
     }
 
     /**
@@ -443,7 +474,7 @@ class LoadTestClient {
 
             const localVideoTrack = this.room.getLocalVideoTrack();
 
-            if (localVideo && localVideoTrack && localVideoTrack.isMuted()) {
+            if (this.localVideo && localVideoTrack && localVideoTrack.isMuted()) {
                 localVideoTrack.unmute();
             }
         }, 2000);
@@ -586,7 +617,7 @@ class LoadTestClient {
             const displayName = randomGuestDisplayName(this.id);
 
             logger.info(`Participant ${this.id}: POST join-guest displayName=${displayName}`);
-            jwt = await fetchGuestJwt(meetingApiId, displayName);
+            jwt = await fetchGuestJwt(this.meetingApiId, displayName);
         } catch (e) {
             logger.error(`Participant ${this.id}: join-guest failed`, e);
 
@@ -614,14 +645,14 @@ class LoadTestClient {
         this.connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_FAILED, this._onConnectionFailed);
         this.connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_DISCONNECTED, this._disconnect);
         this.connection.addEventListener(JitsiMeetJS.events.connection.CONNECTION_REDIRECTED, this._onConnectionRedirected);
-        this.connection.connect({ name: roomName });
+        this.connection.connect({ name: this.roomName });
     }
 
     /**
      * That function is called when connection is established successfully
      */
     onConnectionSuccess() {
-        this.room = this.connection.initJitsiConference(roomName.toLowerCase(), this.config);
+        this.room = this.connection.initJitsiConference(this.roomName.toLowerCase(), this.config);
         this.room.on(JitsiMeetJS.events.conference.STARTED_MUTED, this.onStartMuted.bind(this));
         this.room.on(JitsiMeetJS.events.conference.TRACK_ADDED, this.onRemoteTrack.bind(this));
         this.room.on(JitsiMeetJS.events.conference.CONFERENCE_JOINED, this.onConferenceJoined.bind(this));
@@ -629,18 +660,18 @@ class LoadTestClient {
         this.room.on(JitsiMeetJS.events.conference.USER_LEFT, this.onUserLeft.bind(this));
         this.room.on(JitsiMeetJS.events.conference.PRIVATE_MESSAGE_RECEIVED, this.onPrivateMessage.bind(this));
         this.room.on(JitsiMeetJS.events.conference.CONFERENCE_FAILED, this.onConferenceFailed.bind(this));
-        if (stageView) {
+        if (this.stageView) {
             this.room.on(JitsiMeetJS.events.conference.DOMINANT_SPEAKER_CHANGED, this.onDominantSpeakerChanged.bind(this));
         }
 
         const devices = [];
 
         if (!this.visitor) {
-            if (localVideo) {
+            if (this.localVideo) {
                 devices.push('video');
             }
 
-            if (!config.disableInitialGUM) {
+            if (!config.disableInitialGUM && this.localAudio) {
                 devices.push('audio');
             }
         }
@@ -686,13 +717,279 @@ class LoadTestClient {
 
 let clients = [];
 
+function buildRunOptions() {
+    return {
+        roomName: activeRoomName,
+        meetingApiId: activeMeetingApiId,
+        ...mediaOpts
+    };
+}
+
+function disposeAllClients() {
+    for (let j = 0; j < clients.length; j++) {
+        for (let i = 0; i < clients[j].localTracks.length; i++) {
+            clients[j].localTracks[i].dispose();
+        }
+        clients[j].room?.leave();
+        clients[j].connection?.disconnect();
+    }
+    clients = [];
+}
+
+/**
+ * 上一路已成功入会后再调度下一路；activeClientInterval 为入会后额外等待的 ms（缓解本机带宽）。
+ */
+function scheduleNextClientAfterJoined(completedIndex) {
+    if (!loadTestRunning || activeConcurrentMode) {
+        return;
+    }
+    if (completedIndex + 1 >= activeNumClients) {
+        setLoadTestStatus(
+            `运行中：已全部发起 ${activeNumClients} 路（串行：等上一路入会后再开下一路）`
+        );
+
+        return;
+    }
+
+    if (scheduleNextClientTimer) {
+        clearTimeout(scheduleNextClientTimer);
+        scheduleNextClientTimer = null;
+    }
+
+    scheduleNextClientTimer = setTimeout(() => {
+        scheduleNextClientTimer = null;
+        startClient(completedIndex + 1);
+    }, activeClientInterval);
+}
+
+function startClient(i) {
+    clients[i] = new LoadTestClient(i, JSON.parse(JSON.stringify(config)), buildRunOptions());
+
+    clients[i].connect().catch(err => logger.error(`Participant ${i}: connect failed`, err));
+    updateConnectedCountUi();
+}
+
+/**
+ * 并发模式：每隔 activeClientInterval ms 调用一次 startClient（首路立即发起）；间隔 0 则在同一回合连续发起全部。
+ */
+function scheduleConcurrentClientLaunches() {
+    let nextIndex = 0;
+
+    startClient(nextIndex++);
+
+    if (nextIndex >= activeNumClients) {
+        setLoadTestStatus(`运行中：已发出入会请求 1 / ${activeNumClients}（并发模式）`);
+
+        return;
+    }
+
+    const gapMs = activeClientInterval;
+
+    if (gapMs <= 0) {
+        while (nextIndex < activeNumClients) {
+            startClient(nextIndex++);
+        }
+        setLoadTestStatus(
+            `运行中：已在同一回合发出全部 ${activeNumClients} 路入会请求（并发模式；间隔 0 ms）`
+        );
+
+        return;
+    }
+
+    concurrentJoinIntervalId = setInterval(() => {
+        if (!loadTestRunning) {
+            clearInterval(concurrentJoinIntervalId);
+            concurrentJoinIntervalId = null;
+
+            return;
+        }
+        startClient(nextIndex++);
+
+        if (nextIndex >= activeNumClients) {
+            clearInterval(concurrentJoinIntervalId);
+            concurrentJoinIntervalId = null;
+            setLoadTestStatus(
+                `运行中：已按每 ${gapMs} ms 发出全部 ${activeNumClients} 路入会请求（并发模式；不等待上一路成功）`
+            );
+        }
+    }, gapMs);
+}
+
+function startLoadTest() {
+    if (loadTestRunning) {
+        return;
+    }
+
+    clearLoadTestSchedulers();
+    if (clients.length > 0) {
+        disposeAllClients();
+    }
+
+    const meetingEl = document.getElementById('lt-meeting-id');
+    const resolved = resolveMeetingFromUserInput(meetingEl && meetingEl.value);
+
+    if (!resolved.ok) {
+        logger.warn(resolved.message);
+        if (typeof window !== 'undefined' && window.alert) {
+            window.alert(resolved.message);
+        }
+
+        return;
+    }
+
+    activeRoomName = resolved.roomName;
+    activeMeetingApiId = resolved.meetingApiId;
+
+    const nEl = document.getElementById('lt-num-clients');
+    const iEl = document.getElementById('lt-interval');
+
+    activeNumClients = parsePositiveInt(nEl && nEl.value, 1, 500);
+    activeClientInterval = parseNonNegativeInt(iEl && iEl.value, 100);
+
+    const concurrentRadio = document.getElementById('lt-mode-concurrent');
+
+    activeConcurrentMode = Boolean(concurrentRadio && concurrentRadio.checked);
+
+    loadTestRunning = true;
+    updateLoadTestButtons();
+
+    if (activeConcurrentMode) {
+        setLoadTestStatus(
+            `运行中：目标 ${activeNumClients} 路（并发；每 ${activeClientInterval} ms 发起一路入会，不等待成功）`
+        );
+        logger.info(
+            `Load-test start room=${activeRoomName} numClients=${activeNumClients} concurrent=true intervalMs=${activeClientInterval}`
+        );
+        scheduleConcurrentClientLaunches();
+    } else {
+        setLoadTestStatus(`运行中：目标 ${activeNumClients} 路（串行；等第 0 路成功入会后再启动后续）`);
+        logger.info(
+            `Load-test start room=${activeRoomName} numClients=${activeNumClients} concurrent=false postJoinDelayMs=${activeClientInterval}`
+        );
+        startClient(0);
+    }
+}
+
+function stopLoadTest() {
+    clearLoadTestSchedulers();
+    disposeAllClients();
+    loadTestRunning = false;
+    updateLoadTestButtons();
+    setLoadTestStatus('已停止：所有客户端已断开');
+}
+
+function setLoadTestStatus(text) {
+    const el = document.getElementById('lt-status');
+
+    if (el) {
+        el.textContent = text;
+    }
+}
+
+function updateLoadTestButtons() {
+    const start = document.getElementById('lt-start');
+    const stop = document.getElementById('lt-stop');
+
+    if (start) {
+        start.disabled = loadTestRunning;
+    }
+    if (stop) {
+        stop.disabled = !loadTestRunning;
+    }
+}
+
+function updateConnectedCountUi() {
+    if (!loadTestRunning) {
+        return;
+    }
+    const launched = clients.filter(Boolean).length;
+
+    if (activeConcurrentMode) {
+        setLoadTestStatus(
+            `运行中：已发起 ${launched} / ${activeNumClients} 路（并发；每隔 ${activeClientInterval} ms 发起一路，不等待成功）`
+        );
+    } else {
+        setLoadTestStatus(
+            `运行中：已发起 ${launched} / ${activeNumClients} 路（串行；入会后再开下一路，入会后间隔 ${activeClientInterval} ms）`
+        );
+    }
+}
+
+function initLoadTestPanel() {
+    const mid = document.getElementById('lt-meeting-id');
+
+    if (mid) {
+        const fromPath = getMeetingIdPathHint();
+        const pref = params.meetingId ?? params.room ?? fromPath;
+
+        if (pref) {
+            mid.value = String(pref);
+        }
+    }
+
+    const nc = document.getElementById('lt-num-clients');
+
+    if (nc != null && params.numClients !== undefined && params.numClients !== null && params.numClients !== '') {
+        nc.value = String(parsePositiveInt(params.numClients, 1, 500));
+    }
+
+    const iv = document.getElementById('lt-interval');
+
+    if (iv != null && params.clientInterval !== undefined && params.clientInterval !== null && params.clientInterval !== '') {
+        iv.value = String(parseNonNegativeInt(params.clientInterval, 100));
+    }
+
+    const concurrent =
+        params.concurrent === true
+        || params.concurrent === '1'
+        || params.concurrent === 'true'
+        || String(params.loadTestMode ?? '').toLowerCase() === 'concurrent';
+    const serialRadio = document.getElementById('lt-mode-serial');
+    const concurrentRadio = document.getElementById('lt-mode-concurrent');
+
+    if (concurrentRadio && serialRadio) {
+        if (concurrent) {
+            concurrentRadio.checked = true;
+        } else {
+            serialRadio.checked = true;
+        }
+    }
+
+    const $start = $('#lt-start');
+    const $stop = $('#lt-stop');
+
+    if ($start.length) {
+        $start.on('click', () => startLoadTest());
+    }
+    if ($stop.length) {
+        $stop.on('click', () => stopLoadTest());
+    }
+    updateLoadTestButtons();
+    setLoadTestStatus('就绪：填写会议 ID 后点击「开始压测」');
+}
+
 window.APP = {
+    startLoadTest,
+    stopLoadTest,
+
+    getLoadTestState() {
+        return {
+            running: loadTestRunning,
+            connected: clients.length,
+            roomName: activeRoomName,
+            meetingApiId: activeMeetingApiId,
+            targetClients: activeNumClients,
+            clientIntervalMs: activeClientInterval,
+            concurrentMode: activeConcurrentMode
+        };
+    },
+
     conference: {
         getStats() {
             return clients[0]?.room?.connectionQuality.getStats();
         },
         getConnectionState() {
-            return clients[0] && clients[0].room && room.getConnectionState();
+            return clients[0] && clients[0].room && clients[0].room.getConnectionState();
         },
         muteAudio(mute, num) {
             if (num === undefined) {
@@ -723,13 +1020,18 @@ window.APP = {
     },
     get params() {
         return {
-            roomName,
-            localAudio,
-            localVideo,
-            remoteVideo,
-            remoteAudio,
-            autoPlayVideo,
-            stageView
+            roomName: activeRoomName,
+            meetingApiId: activeMeetingApiId,
+            localAudio: mediaOpts.localAudio,
+            localVideo: mediaOpts.localVideo,
+            remoteVideo: mediaOpts.remoteVideo,
+            remoteAudio: mediaOpts.remoteAudio,
+            autoPlayVideo: mediaOpts.autoPlayVideo,
+            stageView: mediaOpts.stageView,
+            numClients: activeNumClients,
+            clientInterval: activeClientInterval,
+            concurrent: activeConcurrentMode,
+            loadTestMode: activeConcurrentMode ? 'concurrent' : 'serial'
         };
     }
 };
@@ -738,14 +1040,9 @@ window.APP = {
  *
  */
 function unload() {
-    for (let j = 0; j < clients.length; j++) {
-        for (let i = 0; i < clients[j].localTracks.length; i++) {
-            clients[j].localTracks[i].dispose();
-        }
-        clients[j].room?.leave();
-        clients[j].connection?.disconnect();
-    }
-    clients = [];
+    clearLoadTestSchedulers();
+    disposeAllClients();
+    loadTestRunning = false;
 }
 
 $(window).bind('beforeunload', unload);
@@ -761,17 +1058,4 @@ debugLogCollector.start();
 
 JitsiMeetJS.init(config);
 
-function startClient(i) {
-    // dirty copy of the config to be per client
-    clients[i] = new LoadTestClient(i, JSON.parse(JSON.stringify(config)));
-    clients[i].connect().catch(err => logger.error(`Participant ${i}: connect failed`, err));
-    if (i + 1 < numClients) {
-        setTimeout(() => { startClient(i+1) }, clientInterval)
-    }
-}
-
-if (numClients > 0 && roomName && meetingApiId) {
-    startClient(0);
-} else if (numClients > 0) {
-    logger.error('Load-test: abort — invalid URL path / missing meeting id (trailing slash is OK after fix).');
-}
+$(() => initLoadTestPanel());
