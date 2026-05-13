@@ -23,9 +23,10 @@
             testing: {},
             enableNoAudioDetection: true,
             enableNoisyMicDetection: true,
-            channelLastN: -1,
+            /* 大课 1 主讲 + 多听众：与典型 lastN=1 对齐，避免默认 -1 拉满格子的下行 */
+            channelLastN: 1,
             p2p: {
-                enabled: true,
+                enabled: false,
                 stunServers: [
                     {
                         urls: 'stun:meet-jit-si-turnrelay.jitsi.net:443'
@@ -152,7 +153,7 @@
     <div>会议室人数（第一路客户端视角，含自身）: <span id="participants">—</span></div>
 
     <p class="lt-hint">
-        <strong>默认：</strong>不进麦克风、不采集摄像头（无 getUserMedia 弹窗，除非你用 URL 参数显式打开音视频）。<br />
+        <strong>默认（听课端）：</strong>不采集本地音视频；<strong>会订阅远端音画</strong>（贴近 1 讲多听的下行；房间内需至少一路主讲在发布媒体）。仅压信令可用 URL 加 <code>isHuman=false</code> 或 <code>remoteVideo=false&remoteAudio=false</code>。<br />
         <strong>串行入会：</strong>同一时间只让「一路」在连接/入会；上一路出现 <code>CONFERENCE_JOINED</code> 后再按间隔启动下一路。<br />
         <strong>并发入会：</strong>按固定间隔不停发起入会（含 join-guest 与连接），与上一路是否成功无关；用于压 API / 信令，本机带宽与浏览器压力会明显上升。<br />
         <strong>入口：</strong>可打开 <code>http://localhost:5173/meeting/</code>（无需 path 里带会议 id）。若访问 <code>/meeting/&lt;会议id&gt;/</code>，表单会预填该 id。<br />

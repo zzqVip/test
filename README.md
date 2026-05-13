@@ -32,7 +32,8 @@ index.html
 3. 在仓库根目录执行 **`npm run serve:gaea`**（代理依赖已在步骤 1 安装）。会在 **`http://localhost:9090`**（可用环境变量 **`PORT`** 改端口）提供静态文件，并把 **`/api/v1/…`** 反向代理到 **`https://api.gaea-labs.com`**；代理会改写响应 CORS 头，并把发往 API 的 **`Origin`/`Referer`** 设为 **`https://meeting.gaea-labs.com`**（与真实访客入会请求一致）。浏览器打开例如  
    `http://localhost:9090/meeting/cmoxw20dd0007qm0d3ffepgk8?numClients=5&clientInterval=300`
 4. **入会 JWT（join-guest）**：页面跑在 **`localhost` / `127.0.0.1` / `::1`** 时，脚本会请求同源 **`POST /api/v1/meetings/<会议 id>/join-guest`**（即走上述代理），body `{"displayName":"<随机>"}`，用响应里的 **`jitsiJwt`**。若你在 **`config.gaeaLoadTest.joinGuestApiBaseUrl`** 写了完整 API 地址，则会**绕过代理直连**（需自行解决 CORS）。
-5. 参数 `numClients`、`clientInterval`：可用查询串或 hash（hash 优先）。`channelLastN=-1` 时人数一大客户端压力很高，请酌情调小并发。
+5. 参数 `numClients`、`clientInterval`：可用查询串或 hash（hash 优先）。示例页默认 **`channelLastN: 1`**（贴近一大课单主讲 + 听众只拉少量远端流）；若与线上策略不一致可在 `index.html` 或 URL 里改。  
+   **媒体默认**：虚拟客户端默认 **订阅远端音视频**、不采集本机麦/摄像头（贴近听课端）；仅压信令/连接时可加 **`isHuman=false`** 或 **`remoteVideo=false&remoteAudio=false`**（与旧版「几乎无媒体」行为一致）。
 
 **配置对齐**：`hosts` / `bosh` / `websocket` 请以线上实际为准（示例页默认为根路径 **`/xmpp-websocket`、`/http-bind`**，`muc.rtc.gaea-labs.com`）。
 

@@ -15,20 +15,56 @@ const logger = getLogger('load-test-client');
 
 setConfigFromURLParams(config, {}, {}, window.location);
 
-// Load-test controls: allow both ?query and #hash (hash wins on same key). 默认不采集摄像头与麦克风。
+/**
+ * URL / hash 布尔参数（Bourne 可能解析成 boolean，也可能是字符串）。
+ */
+function parseUrlBool(value, defaultValue) {
+    if (value === undefined || value === null) {
+        return defaultValue;
+    }
+    if (typeof value === 'boolean') {
+        return value;
+    }
+    if (typeof value === 'number') {
+        return value !== 0;
+    }
+    const s = String(value).trim().toLowerCase();
+
+    if (s === 'false' || s === '0' || s === 'no' || s === 'off') {
+        return false;
+    }
+    if (s === 'true' || s === '1' || s === 'yes' || s === 'on') {
+        return true;
+    }
+
+    return defaultValue;
+}
+
+// Load-test controls: allow both ?query and #hash (hash wins on same key).
+// 默认模拟「听课端」：不采集本地音视频，但订阅远端（主讲码流）；轻量信令压测请设 isHuman=false 或 remoteVideo=false&remoteAudio=false。
 const params = {
     ...parseURLParams(window.location, false, 'search'),
     ...parseURLParams(window.location, false, 'hash')
 };
-const { isHuman = false } = params;
+
+const hasIsHumanKey = Object.prototype.hasOwnProperty.call(params, 'isHuman');
+let remoteVideoDefault = true;
+let remoteAudioDefault = true;
+
+if (hasIsHumanKey && !parseUrlBool(params.isHuman, false)) {
+    remoteVideoDefault = false;
+    remoteAudioDefault = false;
+}
+
 const {
-    localVideo = false,
-    localAudio = false,
-    remoteVideo = isHuman,
-    remoteAudio = isHuman,
     autoPlayVideo = config.testing.noAutoPlayVideo !== true,
     stageView = config.disableTileView
 } = params;
+
+const localVideo = parseUrlBool(params.localVideo, false);
+const localAudio = parseUrlBool(params.localAudio, false);
+const remoteVideo = parseUrlBool(params.remoteVideo, remoteVideoDefault);
+const remoteAudio = parseUrlBool(params.remoteAudio, remoteAudioDefault);
 
 /** 媒体行为（仍可由 URL 覆盖）；每次 Start 时传给 LoadTestClient */
 const mediaOpts = {
