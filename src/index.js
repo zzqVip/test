@@ -221,6 +221,20 @@ function resolveMeetingFromUserInput(input) {
     return { ok: true, roomName, meetingApiId };
 }
 
+/**
+ * Whether a remote track is desktop / screen sharing (lib-jitsi getVideoType() === 'desktop').
+ * @param {Object} track
+ * @returns {boolean}
+ */
+function isDesktopVideoTrack(track) {
+    if (!track || track.getType() !== 'video') {
+        return false;
+    }
+    const videoType = typeof track.getVideoType === 'function' ? track.getVideoType() : '';
+
+    return videoType === 'desktop';
+}
+
 
 class LoadTestClient {
     constructor(id, config, run) {
@@ -244,7 +258,14 @@ class LoadTestClient {
         this.visitor = false;
         /** 只在一轮压测里为「串行下一路」通知一次，避免 visitor 重连再次触发 */
         this._loadTestJoinNotified = false;
-        this.receiverConstraints = { onStageSources: [], defaultConstraints: {} };
+        /** participantId -> desktop sourceName，用于优先订阅屏幕分享 */
+        this.remoteDesktopSources = {};
+        this.receiverConstraints = {
+            constraints: {},
+            onStageSources: [],
+            selectedSources: [],
+            defaultConstraints: {}
+        };
 
         this.updateConfig();
     }
@@ -260,7 +281,57 @@ class LoadTestClient {
     }
 
     /**
-     * Simple emulation of jitsi-meet's receiver constraints behavior
+     * Scan peerconnection for active desktop share sources (e.g. after media session starts).
+     * @returns {boolean} Whether remoteDesktopSources changed.
+     */
+    refreshRemoteDesktopSources() {
+        const peerconnection = this.room?.jvbJingleSession?.peerconnection;
+
+        if (!peerconnection) {
+            return false;
+        }
+
+        const participantIds = new Set([
+            ...Object.keys(this.remoteTracks),
+            ...(this.room.getParticipants?.() || []).map(p => p.getId())
+        ]);
+        const next = {};
+
+        for (const participantId of participantIds) {
+            for (const track of peerconnection.getRemoteTracks(participantId) || []) {
+                if (isDesktopVideoTrack(track)) {
+                    const sourceName = track.getSourceName();
+
+                    if (sourceName) {
+                        next[participantId] = sourceName;
+                    }
+                }
+            }
+        }
+
+        if (!_.isEqual(next, this.remoteDesktopSources)) {
+            this.remoteDesktopSources = next;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Camera video track for a participant (excludes desktop share).
+     * @param {string} participantId
+     * @returns {Object|undefined}
+     */
+    getParticipantCameraVideoTrack(participantId) {
+        const tracks = this.room.jvbJingleSession?.peerconnection?.getRemoteTracks(participantId) || [];
+
+        return tracks.find(track => track.getType() === 'video' && !isDesktopVideoTrack(track));
+    }
+
+    /**
+     * Simple emulation of jitsi-meet's receiver constraints behavior.
+     * When desktop share is active, prioritize it in onStageSources for bandwidth testing.
      */
     updateReceiverConstraints(force = false) {
         if (!this.dataChannelOpen) {
@@ -291,12 +362,27 @@ class LoadTestClient {
             lastN = lastN === -1 ? limitedLastN : Math.min(limitedLastN, lastN);
         }
 
-        let onStageSource;
+        const desktopSources = Object.values(this.remoteDesktopSources).filter(Boolean);
+        const onStageSources = [];
+        const selectedSources = [];
+        const sourceConstraints = {};
 
-        if (this.onStageParticipant) {
-            const onStageParticipantTrack = this.room.jvbJingleSession?.peerconnection?.getRemoteTracks(this.onStageParticipant)?.find(track => track.getType() === 'video');
-            if (onStageParticipantTrack) {
-                onStageSource = onStageParticipantTrack.getSourceName();
+        if (desktopSources.length > 0 && this.remoteVideo) {
+            const desktopMaxHeight = this.stageView ? 2160 : 1080;
+
+            desktopSources.forEach(sourceName => {
+                sourceConstraints[sourceName] = { maxHeight: desktopMaxHeight };
+            });
+            if (desktopSources.length === 1) {
+                onStageSources.push(desktopSources[0]);
+            } else {
+                selectedSources.push(...desktopSources);
+            }
+        } else if (this.onStageParticipant) {
+            const cameraTrack = this.getParticipantCameraVideoTrack(this.onStageParticipant);
+
+            if (cameraTrack) {
+                onStageSources.push(cameraTrack.getSourceName());
             }
         }
 
@@ -304,19 +390,19 @@ class LoadTestClient {
             if (force
                 || this.receiverConstraints.lastN !== lastN
                 || this.receiverConstraints.defaultConstraints.maxHeight !== newMaxFrameHeight
-                || this.receiverConstraints.onStageSources[0] !== onStageSource) {
+                || !_.isEqual(this.receiverConstraints.onStageSources, onStageSources)
+                || !_.isEqual(this.receiverConstraints.selectedSources, selectedSources)
+                || !_.isEqual(this.receiverConstraints.constraints, sourceConstraints)) {
                     const newConstraints = _.cloneDeep(this.receiverConstraints);
 
                     newConstraints.lastN = lastN;
                     newConstraints.defaultConstraints.maxHeight = newMaxFrameHeight;
-                    if (onStageSource) {
-                        newConstraints.onStageSources[0] = onStageSource;
-                    }
-                    else {
-                        newConstraints.onStageSources = [];
-                    }
+                    newConstraints.onStageSources = onStageSources;
+                    newConstraints.selectedSources = selectedSources;
+                    newConstraints.constraints = sourceConstraints;
 
                     this.room.setReceiverConstraints(newConstraints);
+                    this.receiverConstraints = newConstraints;
                  }
         }
     }
@@ -331,8 +417,7 @@ class LoadTestClient {
 
     /**
      * Simple emulation of jitsi-meet's stage view participant selection behavior.
-     * Doesn't take into account pinning or screen sharing, and the initial behavior
-     * is slightly different.
+     * Screen sharing is handled separately via remoteDesktopSources in updateReceiverConstraints.
      * @returns Whether the on stage participant changed.
      */
     selectStageViewParticipant(selected, previous) {
@@ -460,19 +545,46 @@ class LoadTestClient {
             this.remoteTracks[participant] = [];
         }
 
+        if (isDesktopVideoTrack(track)) {
+            const sourceName = track.getSourceName();
+
+            if (sourceName && this.remoteDesktopSources[participant] !== sourceName) {
+                this.remoteDesktopSources[participant] = sourceName;
+                this.updateReceiverConstraints(true);
+            }
+        }
+
         if (this.id !== 0) {
             return;
         }
 
         const idx = this.remoteTracks[participant].push(track);
         const id = participant + track.getType() + idx;
+        const desktopSuffix = isDesktopVideoTrack(track) ? '-desktop' : '';
 
         if (track.getType() === 'video') {
-            $('body').append(`<video autoplay='1' id='${id}' />`);
+            $('body').append(`<video autoplay='1' id='${id}${desktopSuffix}' title='${desktopSuffix ? 'desktop' : 'camera'}' />`);
         } else {
             $('body').append(`<audio autoplay='1' id='${id}' />`);
         }
-        track.attach($(`#${id}`)[0]);
+        track.attach($(`#${id}${desktopSuffix}`)[0]);
+    }
+
+    /**
+     * Handles remote track removed (e.g. desktop share stopped).
+     * @param {Object} track
+     */
+    onRemoteTrackRemoved(track) {
+        if (!isDesktopVideoTrack(track)) {
+            return;
+        }
+        const participant = track.getParticipantId();
+        const sourceName = track.getSourceName();
+
+        if (this.remoteDesktopSources[participant] === sourceName) {
+            delete this.remoteDesktopSources[participant];
+            this.updateReceiverConstraints(true);
+        }
     }
 
     /**
@@ -530,6 +642,7 @@ class LoadTestClient {
      * Media session started.
      */
     onMediaSessionStarted() {
+        this.refreshRemoteDesktopSources();
         this.updateReceiverConstraints(true);
     }
 
@@ -540,6 +653,8 @@ class LoadTestClient {
     onUserLeft(id) {
         this.numParticipants--;
         this.setNumberOfParticipants();
+        delete this.remoteDesktopSources[id];
+
         if (!this.remoteTracks[id]) {
             return;
         }
@@ -551,7 +666,8 @@ class LoadTestClient {
         const tracks = this.remoteTracks[id];
 
         for (let i = 0; i < tracks.length; i++) {
-            const container = $(`#${id}${tracks[i].getType()}${i + 1}`)[0];
+            const desktopSuffix = isDesktopVideoTrack(tracks[i]) ? '-desktop' : '';
+            const container = $(`#${id}${tracks[i].getType()}${i + 1}${desktopSuffix}`)[0];
 
             if (container) {
                 tracks[i].detach(container);
@@ -691,6 +807,7 @@ class LoadTestClient {
         this.room = this.connection.initJitsiConference(this.roomName.toLowerCase(), this.config);
         this.room.on(JitsiMeetJS.events.conference.STARTED_MUTED, this.onStartMuted.bind(this));
         this.room.on(JitsiMeetJS.events.conference.TRACK_ADDED, this.onRemoteTrack.bind(this));
+        this.room.on(JitsiMeetJS.events.conference.TRACK_REMOVED, this.onRemoteTrackRemoved.bind(this));
         this.room.on(JitsiMeetJS.events.conference.CONFERENCE_JOINED, this.onConferenceJoined.bind(this));
         this.room.on(JitsiMeetJS.events.conference.DATA_CHANNEL_OPENED, this.onDataChannelOpened.bind(this));
         this.room.on(JitsiMeetJS.events.conference.USER_LEFT, this.onUserLeft.bind(this));
